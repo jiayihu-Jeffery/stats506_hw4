@@ -11,23 +11,329 @@ editor: visual
 theme: Zephyr
 ---
 
-## Quarto
+# Information
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+**the Github website for this homework is https://github.com/jiayihu-Jeffery/stats506_hw4**
 
-## Running Code
+## Problem Set #04
 
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
-```{r}
-1 + 1
+```{r setup, include=FALSE}
+# Load all core libraries for the entire document
+library(tidyverse)
+library(nzelect)
+library(infer)
+library(glue)
+library(scales)
+library(slider)
+library(ggrepel)
 ```
 
-You can add options to executable code like this
+## Problem 1 - Tidyverse: New Zealand
+
+Use the **tidyverse** for this problem. In particular, use piping and **dplyr** as much as you are able. **Note**: Use of any deprecated functions will result in a point loss.
+
+Install and load the package [**nzelect**](https://cran.r-project.org/package=nzelect). This package contains a number of data tables with information about election results in New Zealand. Use the `nzge` data for this problem.
+
+Note that there are two types of votes cast - a Candidate vote, and a Party vote. Be sure to handle these separately as appropriate. Don’t forget that `help()` works on data as well a functions (assuming the data is appropriately documented).
+
+1.  Generate a table (which can just be a nicely printed tibble) of vote count (regardless of party) per year/type. Make sure to sort it by vote count.
 
 ```{r}
-#| echo: false
-2 * 2
+library(tidyverse)
+library(nzelect)
+
+votes_per_year_type <- nzelect::nzge %>%
+group_by(election_year, voting_type) %>%
+summarise(
+total_votes = sum(votes, na.rm = TRUE)
+) %>%
+ungroup() %>%
+arrange(desc(total_votes))
+
+print(votes_per_year_type)
+
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+2.  Focus only on the 2014 election. Report the proportion of votes for each party in the Candidate election. Again, produce a nice table and sort it by percent of vote.
+
+```{r}
+
+prop_2014_candidate <- nzelect::nzge %>%
+filter(election_year == 2014) %>%
+filter(voting_type == "Candidate") %>%
+group_by(party) %>%
+summarise(
+party_votes = sum(votes, na.rm = TRUE)
+) %>%
+ungroup() %>%
+mutate(
+proportion = party_votes / sum(party_votes),
+percentage = scales::percent(proportion, accuracy = 0.01)
+) %>%
+arrange(desc(proportion))
+
+print(prop_2014_candidate)
+
+```
+
+3.  Produce a nice table indicating, for each year, which party won the Candidate vote and which party won the Party vote.
+
+```{r}
+winning_parties_per_year <- nzelect::nzge %>%
+group_by(election_year, voting_type, party) %>%
+summarise(
+total_party_votes = sum(votes, na.rm = TRUE),
+.groups = 'drop'
+) %>%
+group_by(election_year, voting_type) %>%
+slice_max(
+order_by = total_party_votes,
+n = 1,
+with_ties = FALSE
+) %>%
+select(election_year, voting_type, party) %>%
+ungroup() %>%
+pivot_wider(
+names_from = voting_type,
+values_from = party
+) %>%
+arrange(desc(election_year))
+
+print(winning_parties_per_year)
+
+```
+
+## Problem 2 - Tidyverse: Tennis
+
+Use the **tidyverse** for this problem. In particular, use piping and **dplyr** as much as you are able. **Note**: Use of any deprecated functions will result in a point loss.
+
+Use the “ATP Matches” data from 2019 available at <https://raw.githubusercontent.com/JeffSackmann/tennis_atp/refs/heads/master/atp_matches_2019.csv>. This data tracks all Tennis matches. This data does *not* have documentation, so you’ll have to explore the data yourself to figure out it’s structure. Use it to answer the following questions. Your answers should show both the output from R that allows you to answer it, as well as a written answer.
+
+1.  How many tournaments took place in 2019?
+
+```{r, message = FALSE}
+library(tidyverse)
+
+# Tennis 2019
+atp_matches_2019 <- read_csv("https://raw.githubusercontent.com/JeffSackmann/tennis_atp/refs/heads/master/atp_matches_2019.csv")
+
+# head(atp_matches_2019)
+
+atp_matches_2019 %>%
+  summarize(num_tournaments = n_distinct(tourney_id))
+
+```
+
+2.  Did any player win more than one tournament? If so, how many players won more than one tournament, and how many tournaments did the most winning player(s) win?
+
+```{r}
+champions_summary <- atp_matches_2019 %>%
+  filter(round == "F") %>%
+  group_by(winner_name) %>%
+  summarize(championships_won = n()) %>%
+  arrange(desc(championships_won))
+
+print(champions_summary)
+
+# Count how many players won more than one tournament
+players_with_multiple_wins <- champions_summary %>%
+  filter(championships_won > 1) %>%
+  summarize(num_players = n())
+
+print(players_with_multiple_wins)
+```
+
+3.  Is there any evidence that winners have more aces than losers? (If you address this with a hypothesis test, do not use base R functionality - continue to remain in the Tidyverse.)
+
+```{r, message = FALSE}
+
+# (1) Paired differences (winner ACE − loser ACE)
+
+ace_diff <- atp_matches_2019 %>%
+transmute(ace_diff = w_ace - l_ace) %>%
+tidyr::drop_na(ace_diff)
+
+# (2) Sample stats and effect size
+
+ace_stats <- ace_diff %>%
+summarise(
+n = n(),
+mean_diff = mean(ace_diff),
+sd_diff = sd(ace_diff),
+cohen_d = mean_diff / sd_diff
+)
+
+# (3) One-sided paired t-test (H1: mean_diff > 0)
+
+ace_test <- ace_diff %>%
+t_test(response = ace_diff, mu = 0, alternative = "greater")
+
+# (4) Tidy summary table
+
+ace_tidy <- ace_stats %>%
+bind_cols(
+ace_test %>%
+select(
+t = statistic, df = t_df, p_value,
+estimate, lower_ci
+)
+) %>%
+rename(mean_diff_est = estimate, ci_lower = lower_ci)
+
+# (5) Print tidy table
+
+ace_tidy
+
+# (6) Text conclusion
+
+cat(
+  glue(
+    "Conclusion (one-sided paired t-test): On average, winners serve {round(ace_tidy$mean_diff_est, 2)} more aces than losers; ",
+    "t = {round(ace_tidy$t, 2)}, df = {ace_tidy$df}, p = {format(ace_tidy$p_value, digits = 3)}; ",
+    "95% CI lower bound for the mean difference = {round(ace_tidy$ci_lower, 2)}; ",
+    "Cohen's d (for paired differences) = {round(ace_tidy$cohen_d, 2)}.\n",
+    "Therefore, there is strong evidence that winners serve significantly more aces."
+  )
+)
+
+
+```
+
+4.  Identify the player(s) with the highest win-rate. (Note that this is NOT asking for the highest number of wins.) Restrict to players with at least 5 matches.
+
+```{r}
+# Highest win-rate with ≥ 5 matches — self-contained chunk
+
+win_rate_summary <- atp_matches_2019 %>%
+  select(winner_name, loser_name) %>%
+  pivot_longer(c(winner_name, loser_name),
+               names_to = "result", values_to = "player_name") %>%
+  mutate(win = if_else(result == "winner_name", 1L, 0L)) %>%
+  group_by(player_name) %>%
+  summarise(
+    matches_played = n(),
+    wins = sum(win),
+    win_rate = wins / matches_played,
+    .groups = "drop"
+  ) %>%
+  filter(matches_played >= 5) %>%
+  arrange(desc(win_rate), desc(wins), player_name)
+
+top_players <- win_rate_summary %>%
+  slice_max(win_rate, with_ties = TRUE)
+
+top_players_pretty <- top_players %>%
+  mutate(
+    win_rate = percent(win_rate),
+    summary = paste0(player_name, " (", wins, "/", matches_played, ", ", win_rate, ")")
+  )
+
+top_players_pretty
+
+# Text conclusion
+
+cat(
+  glue(
+    "Under the restriction of at least 5 matches, the highest win rate is {top_players_pretty$win_rate[1]}, ",
+    "achieved by: {paste(top_players_pretty$summary, collapse = '; ')}."
+  )
+)
+
+```
+
+## Problem 3 - Visualization
+
+Note: This is, intentionally, a very open-ended question. There is no “right” answer. The goal is for you to explore your plotting options, and settle on something reasonable. You can use base R, ggplot, or something else. You’ll likely have to look online for resources on plotting beyond what we covered in class.
+
+Use the NYTimes Covid data (<https://raw.githubusercontent.com/nytimes/covid-19-data/refs/heads/master/rolling-averages/us-states.csv>). This lists daily Covid new cases. For each of the following, produce a publication-ready plot which addresses the question. Use your plot to support an argument for your question.
+
+1.  How many major and minor spikes in cases were there?
+
+```{r}
+library(tidyverse)
+
+covid <- read_csv("https://raw.githubusercontent.com/nytimes/covid-19-data/refs/heads/master/rolling-averages/us-states.csv")
+
+# National total per day (7-day avg) — currently summing per 100k; keep structure as given
+
+us_cases <- covid %>%
+group_by(date) %>%
+summarise(total_cases = sum(cases_avg_per_100k, na.rm = TRUE))
+
+ggplot(us_cases, aes(x = date, y = total_cases)) +
+geom_line(color = "steelblue") +
+geom_smooth(span = 0.2, color = "red", se = FALSE) +
+labs(title = "U.S. COVID-19 Case Spikes (7-day avg per 100k)",
+y = "Cases per 100k", x = "Date") +
+theme_minimal()
+
+```
+
+2.  For the states with the highest and lowest overall rates per population, what differences do you see in their trajectories over time?
+
+```{r}
+library(tidyverse)
+
+# Average rate (per 100k) by state
+
+state_avg <- covid %>%
+group_by(state) %>%
+summarise(avg_rate = mean(cases_avg_per_100k, na.rm = TRUE)) %>%
+arrange(desc(avg_rate))
+
+# Top 3 and bottom 3 states
+
+top_states <- head(state_avg$state, 3)
+bottom_states <- tail(state_avg$state, 3)
+
+# Plot trajectories
+
+covid %>%
+filter(state %in% c(top_states, bottom_states)) %>%
+ggplot(aes(x = date, y = cases_avg_per_100k, color = state)) +
+geom_line(linewidth = 0.8) +
+labs(
+title = "Trajectories of States with Highest & Lowest COVID-19 Case Rates",
+subtitle = paste("Top:", paste(top_states, collapse = ", "),
+" | Bottom:", paste(bottom_states, collapse = ", ")),
+x = "Date",
+y = "New Cases per 100k (7-day avg)",
+color = "State"
+) +
+theme_minimal(base_size = 12) +
+theme(legend.position = "bottom")
+
+```
+
+3.  Identify, to the best of your ability without a formal test, the first five states to experience Covid in a substantial way.
+
+```{r}
+# Threshold to indicate "substantial outbreak" (e.g., ≥ 5 per 100k, 7-day avg)
+
+first_substantial <- covid %>%
+filter(cases_avg_per_100k >= 5) %>%
+group_by(state) %>%
+summarise(first_date = min(date)) %>%
+arrange(first_date)
+
+# First five states
+
+head(first_substantial, 5)
+
+# Timeline for the first 10 states
+
+first_substantial %>%
+slice_head(n = 10) %>%
+ggplot(aes(x = first_date, y = reorder(state, first_date))) +
+geom_point(color = "firebrick", size = 3) +
+geom_segment(aes(xend = first_date, yend = state),
+x = as.Date("2020-01-15"), color = "grey70") +
+labs(
+title = "First States to Experience Substantial COVID-19 Spread",
+subtitle = "Threshold: ≥ 5 new cases per 100k (7-day avg)",
+x = "Date of first substantial outbreak",
+y = "State"
+) +
+theme_minimal(base_size = 12)
+
+```
